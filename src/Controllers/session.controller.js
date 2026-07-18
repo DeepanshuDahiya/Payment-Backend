@@ -1,40 +1,32 @@
-import { redisClient } from "../../server.js";
-import Sessions from "../Models/session.model.js";
+import customError from "../Utilities/customError";
+import sendResponse from "../Utilities/sendResponse";
 
-export const getAllSessionsController = async (req, res) => {
+export const getAllSessionsController = async (req, res, next) => {
   try {
-    const allSessions = await redisClient.get(req.signedCookies.sid);
-    return res.status(200).json({ allSessions });
+    const allSessions = await redis.get(req.signedCookies.sid);
+
+    return sendResponse(res, 200, "Sessions", { allSessions });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    next(error);
   }
 };
 
-export const terminateSessionController = async (req, res) => {
-  const sessionId = req.params.sessionId;
+export const terminateSessionController = async (req, res, next) => {
   try {
-    const result = await redisClient.del(sessionId);
+    const sessionId = req.params.sessionId;
+    const result = await redis.del(sessionId);
 
-    if (!result) return res.status(400).json({ error: "Session not found." });
+    if (!result) throw new customError(404, "Session not found");
 
-    return res
-      .status(200)
-      .json({ message: "Session terminated successfully." });
+    return sendResponse(res, 200, "Session terminated successfully.");
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    next(error);
   }
 };
 
-// export const terminateAllSessionController = async (req, res) => {
+// export const terminateAllSessionController = async (req, res, next) => {
 //   try {
-//     const result = await Sessions.deleteMany({ userId: req.user.userId });
-
-//     if (!result) return res.status(400).json({ error: "Sessions not found." });
-
-//     return res
-//       .status(200)
-//       .json({ message: "All sessions terminated successfully." });
 //   } catch (error) {
-//     return res.status(500).json({ error: error.message });
+//     next(error)
 //   }
 // };

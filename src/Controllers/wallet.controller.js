@@ -1,23 +1,24 @@
 import Ledgers from "../Models/ledger.model.js";
 import Wallets from "../Models/wallet.model.js";
+import customError from "../Utilities/customError.js";
+import sendResponse from "../Utilities/sendResponse.js";
 
-export const getWallet = async (req, res) => {
+export const getWallet = async (req, res, next) => {
   try {
     const wallet = await Wallets.findOne({ userId: req.user.userId });
 
-    if (!wallet) return res.status(400).json({ error: "Wallet not found" });
+    if (!wallet) throw new customError(404, "Wallet not found");
 
-    return res.status(200).json(wallet);
+    return sendResponse(res, 200, "", { wallet });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    next(error);
   }
 };
 
-export const verifyWallet = async (req, res) => {
+export const verifyWallet = async (req, res, next) => {
   try {
     const wallet = await Wallets.findOne({ userId: req.user.userId });
-
-    if (!wallet) return res.status(400).json({ error: "Wallet not found" });
+    if (!wallet) throw new customError(404, "Wallet not found");
 
     const result = await Ledgers.aggregate([
       {
@@ -36,10 +37,12 @@ export const verifyWallet = async (req, res) => {
       isConsistent = true;
     } else isConsistent = false;
 
-    return res
-      .status(200)
-      .json({ walletBalance: wallet.balance, computedBalance, isConsistent });
+    return sendResponse(res, 200, "Wallet verified", {
+      walletBalance: wallet.balance,
+      computedBalance,
+      isConsistent,
+    });
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    next(error);
   }
 };

@@ -7,6 +7,13 @@ import Ledgers from "../Models/ledger.model.js";
 import customError from "../Utilities/customError.js";
 import sendResponse from "../Utilities/sendResponse.js";
 import { redis } from "../Config/redis.js";
+import {
+  markFailed,
+  markRejected,
+  markSuccess,
+} from "../Services/idempotency.services.js";
+import { transferMoney } from "../Services/transfer.services.js";
+import { cursorPagination } from "../Services/cursorPagination.service.js";
 
 export const requestPayment = async (req, res, next) => {
   try {
@@ -40,6 +47,38 @@ export const requestPayment = async (req, res, next) => {
 
 export const incomingPaymentRequests = async (req, res, next) => {
   try {
+    const { limit, cursorId, cursorCreatedAt } = req.query;
+
+    const {
+      data: paymentRequests,
+      nextCursor,
+      hasMore,
+    } = await cursorPagination({
+      model: PaymentRequests,
+      baseQuery: {
+        requestedTo: req.user.userId,
+      },
+      cursorId,
+      cursorCreatedAt,
+      limit,
+      populate: [
+        {
+          path: "requestedBy",
+          select: "name email",
+        },
+      ],
+    });
+
+    return sendResponse(
+      res,
+      200,
+      "Incoming payment requests fetched successfully",
+      {
+        paymentRequests,
+        nextCursor,
+        hasMore,
+      },
+    );
   } catch (error) {
     next(error);
   }
@@ -47,6 +86,38 @@ export const incomingPaymentRequests = async (req, res, next) => {
 
 export const outgoingPaymentRequests = async (req, res, next) => {
   try {
+    const { limit, cursorId, cursorCreatedAt } = req.query;
+
+    const {
+      data: paymentRequests,
+      nextCursor,
+      hasMore,
+    } = await cursorPagination({
+      model: PaymentRequests,
+      baseQuery: {
+        requestedBy: req.user.userId,
+      },
+      cursorId,
+      cursorCreatedAt,
+      limit,
+      populate: [
+        {
+          path: "requestedTo",
+          select: "name email",
+        },
+      ],
+    });
+
+    return sendResponse(
+      res,
+      200,
+      "Outgoing payment requests fetched successfully",
+      {
+        paymentRequests,
+        nextCursor,
+        hasMore,
+      },
+    );
   } catch (error) {
     next(error);
   }
@@ -64,20 +135,13 @@ export const handlePaymentRequest = async (req, res, next) => {
 
     idempotencyKey = `idem:${req.user.userId}:${idemKey}`;
 
-    const isSet = await redis.set(
-      idempotencyKey,
-      "PENDING",
-      "EX",
-      60 * 5,
-      "NX",
-    );
+    const existing = await checkIdempotency(idempotencyKey);
 
-    if (!isSet) {
-      const existing = await redis.get(idempotencyKey);
+    if (existing) {
       return sendResponse(
         res,
         200,
-        "Transaction already exists with this idempotency key",
+        "Action on this payment with this idempotency key has already been taken",
         { status: existing },
       );
     }
@@ -92,7 +156,7 @@ export const handlePaymentRequest = async (req, res, next) => {
         { status: "rejected" },
       );
 
-      await redis.set(idempotencyKey, "rejected", "EX", 60 * 5);
+      await markRejected(idempotencyKey);
 
       return sendResponse(res, 200, "Payment request rejected successfully.");
     } else if (action === "accept") {
@@ -117,60 +181,18 @@ export const handlePaymentRequest = async (req, res, next) => {
       if (receiver._id.equals(req.user.userId))
         throw new customError(400, "Receiver cannot send money to themselves.");
 
-      const senderObjectId = request.requestedTo;
-      const receiverObjectId = receiver._id;
+      transaction = await transferMoney({
+        senderId: request.requestedTo,
+        senderWalletId: req.user.walletId,
+        receiverId: receiver._id,
+        receiverWalletId: receiver.walletId,
+        amount: request.amount,
+        session,
+      });
 
-      const sendResult = await Wallets.findOneAndUpdate(
-        { _id: req.user.walletId, balance: { $gte: request.amount } },
-        { $inc: { balance: -request.amount } },
-        { session },
-      );
-
-      if (!sendResult) throw new customError(400, "Insufficient balance");
-
-      const receiveResult = await Wallets.findOneAndUpdate(
-        { _id: receiver.walletId },
-        { $inc: { balance: request.amount } },
-        { session },
-      );
-
-      if (!receiveResult)
-        throw new customError(400, `Failed to send money to ${receiver.name}`);
-
-      [transaction] = await Transactions.create(
-        [
-          {
-            type: "transfer",
-            amount: request.amount,
-            status: "success",
-            senderId: senderObjectId,
-            receiverId: receiverObjectId,
-          },
-        ],
-        { session },
-      );
-
-      await Ledgers.insertMany(
-        [
-          {
-            type: "debit",
-            userId: senderObjectId,
-            amount: -request.amount,
-            transactionId: transaction._id,
-          },
-          {
-            type: "credit",
-            userId: receiverObjectId,
-            amount: request.amount,
-            transactionId: transaction._id,
-          },
-        ],
-        { session },
-      );
+      await markSuccess(idempotencyKey);
 
       await session.commitTransaction();
-
-      await redis.set(idempotencyKey, "SUCCESS", "EX", 60 * 5);
     }
 
     return sendResponse(res, 200, "Payment done successfully.");
@@ -184,9 +206,8 @@ export const handlePaymentRequest = async (req, res, next) => {
       });
     }
     if (idempotencyKey) {
-      await redis.set(idempotencyKey, "FAILED", "EX", 60 * 5);
+      await markFailed(idempotencyKey);
     }
-
     next(error);
   } finally {
     await session.endSession();

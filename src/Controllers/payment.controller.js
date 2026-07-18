@@ -7,6 +7,12 @@ import { sanitizeUser } from "../Utilities/sanitizeUser.js";
 import customError from "../Utilities/customError.js";
 import { redis } from "../Config/redis.js";
 import sendResponse from "../Utilities/sendResponse.js";
+import { transferMoney } from "../Services/transfer.services.js";
+import {
+  checkIdempotency,
+  markFailed,
+  markSuccess,
+} from "../Services/idempotency.services.js";
 
 export const getReceiver = async (req, res, next) => {
   try {
@@ -44,16 +50,9 @@ export const createTransfer = async (req, res, next) => {
 
     idempotencyKey = `idem:${req.user.userId}:${idemKey}`;
 
-    const isSet = await redis.set(
-      idempotencyKey,
-      "PENDING",
-      "EX",
-      60 * 5,
-      "NX",
-    );
+    const existing = await checkIdempotency(idempotencyKey);
 
-    if (!isSet) {
-      const existing = await redis.get(idempotencyKey);
+    if (existing) {
       return sendResponse(
         res,
         200,
@@ -72,59 +71,18 @@ export const createTransfer = async (req, res, next) => {
 
     await session.startTransaction();
 
-    const sendResult = await Wallets.findOneAndUpdate(
-      { _id: req.user.walletId, balance: { $gte: amount } },
-      { $inc: { balance: -amount } },
-      { session },
-    );
+    transaction = await transferMoney({
+      senderId: req.user.userId,
+      senderWalletId: req.user.walletId,
+      receiverId: receiver._id,
+      receiverWalletId: receiver.walletId,
+      amount,
+      session,
+    });
 
-    if (!sendResult) throw new customError(400, "Insufficient balance");
-
-    const receiveResult = await Wallets.findOneAndUpdate(
-      { _id: receiver.walletId },
-      { $inc: { balance: amount } },
-      { session },
-    );
-
-    if (!receiveResult)
-      throw new customError(400, `Failed to send money to ${receiver.name}`);
-
-    [transaction] = await Transactions.create(
-      [
-        {
-          type: "transfer",
-          amount,
-          status: "success",
-          senderId: req.user.userId,
-          receiverId: receiver._id,
-        },
-      ],
-      { session },
-    );
-
-    if (!transaction) throw new customError(400, "Transaction not created.");
-
-    const ledgerResult = await Ledgers.insertMany(
-      [
-        {
-          type: "debit",
-          userId: req.user.userId,
-          amount: -amount,
-          transactionId: transaction._id,
-        },
-        {
-          type: "credit",
-          userId: receiver._id,
-          amount: amount,
-          transactionId: transaction._id,
-        },
-      ],
-      { session },
-    );
+    await markSuccess(idempotencyKey);
 
     await session.commitTransaction();
-
-    await redis.set(idempotencyKey, "SUCCESS", "EX", 60 * 5);
 
     return sendResponse(res, 200, "Transfer successful");
   } catch (error) {
@@ -134,7 +92,7 @@ export const createTransfer = async (req, res, next) => {
       });
     }
     if (idempotencyKey) {
-      await redis.set(idempotencyKey, "FAILED", "EX", 60 * 5);
+      await markFailed(idempotencyKey);
     }
     if (session.inTransaction()) {
       await session.abortTransaction();
@@ -160,16 +118,9 @@ export const createDeposit = async (req, res, next) => {
 
     idempotencyKey = `idem:${req.user.userId}:${idemKey}`;
 
-    const isSet = await redis.set(
-      idempotencyKey,
-      "PENDING",
-      "EX",
-      60 * 5,
-      "NX",
-    );
+    const existing = await checkIdempotency(idempotencyKey);
 
-    if (!isSet) {
-      const existing = await redis.get(idempotencyKey);
+    if (existing) {
       return sendResponse(
         res,
         200,
@@ -216,7 +167,7 @@ export const createDeposit = async (req, res, next) => {
       { session },
     );
 
-    await redis.set(idempotencyKey, "SUCCESS", "EX", 60 * 5);
+    await markSuccess(idempotencyKey);
 
     await session.commitTransaction();
 
@@ -231,7 +182,7 @@ export const createDeposit = async (req, res, next) => {
       });
     }
     if (idempotencyKey) {
-      await redis.set(idempotencyKey, "FAILED", "EX", 60 * 5);
+      await markFailed(idempotencyKey);
     }
     next(error);
   } finally {
@@ -254,16 +205,9 @@ export const createWithdrawal = async (req, res, next) => {
 
     idempotencyKey = `idem:${req.user.userId}:${idemKey}`;
 
-    const isSet = await redis.set(
-      idempotencyKey,
-      "PENDING",
-      "EX",
-      60 * 5,
-      "NX",
-    );
+    const existing = await checkIdempotency(idempotencyKey);
 
-    if (!isSet) {
-      const existing = await redis.get(idempotencyKey);
+    if (existing) {
       return sendResponse(
         res,
         200,
@@ -310,9 +254,9 @@ export const createWithdrawal = async (req, res, next) => {
       { session },
     );
 
-    await session.commitTransaction();
+    await markSuccess(idempotencyKey);
 
-    await redis.set(idempotencyKey, "SUCCESS", "EX", 60 * 5);
+    await session.commitTransaction();
 
     return sendResponse(res, 200, "Withdrawal successful");
   } catch (error) {
@@ -325,9 +269,8 @@ export const createWithdrawal = async (req, res, next) => {
       });
     }
     if (idempotencyKey) {
-      await redis.set(idempotencyKey, "FAILED", "EX", 60 * 5);
+      await markFailed(idempotencyKey);
     }
-
     next(error);
   } finally {
     await session.endSession();
