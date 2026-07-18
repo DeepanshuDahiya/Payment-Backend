@@ -15,10 +15,10 @@ export const getTransactionHistory = async (req, res) => {
     cursorQuery = {
       $or: [
         {
-          cursorCreatedAt: { $lt: new Date(cursorCreatedAt) },
+          createdAt: { $lt: new Date(cursorCreatedAt) },
         },
         {
-          cursorCreatedAt: { $lt: new Date(cursorCreatedAt) },
+          createdAt: { $lt: new Date(cursorCreatedAt) },
           _id: { $lt: cursorId },
         },
       ],

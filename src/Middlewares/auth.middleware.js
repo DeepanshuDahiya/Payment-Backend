@@ -1,5 +1,4 @@
 import { redisClient } from "../../server.js";
-import Sessions from "../Models/session.model.js";
 import Users from "../Models/user.model.js";
 
 export const requireAuth = async (req, res, next) => {

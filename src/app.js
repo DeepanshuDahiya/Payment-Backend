@@ -10,6 +10,7 @@ import requestPaymentRoutes from "./Routes/requestPayment.routes.js";
 import { requireAuth } from "./Middlewares/auth.middleware.js";
 import { globalRateLimiter } from "./Middlewares/global.rate.limiter.js";
 import dotenv from "dotenv";
+import { errorHandler } from "./Middlewares/error.handler.js";
 dotenv.config();
 
 const app = express();
@@ -31,9 +32,6 @@ app.use("/payments", requireAuth, paymentRoutes);
 app.use("/req-payments", requireAuth, requestPaymentRoutes);
 app.use("/transactions", requireAuth, transactionHistoryRoutes);
 
-app.use((err, req, res, next) => {
-  console.log(err);
-  return res.status(500).json({ error: err.message });
-});
+app.use(errorHandler);
 
 export default app;
