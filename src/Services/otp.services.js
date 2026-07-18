@@ -3,15 +3,23 @@ import emailQueue from "../Queues/email.queue.js";
 import Crypto from "crypto";
 import customError from "../Utilities/customError.js";
 
-export async function sendOtp({ email, userName, queueName = "email-queue", purpose }) {
+export async function sendOtp({
+  email,
+  userName,
+  queueName = "email-queue",
+  purpose,
+}) {
   // Generate OTP
   const otp = Crypto.randomInt(1000, 10000);
 
   // Store in Redis
-  const isResendAllowed = await redisClient.set(`resend:${email}`, otp, {
-    EX: 60,
-    NX: true,
-  });
+  const isResendAllowed = await redisClient.set(
+    `resend:${email}`,
+    otp,
+    "EX",
+    60,
+    "NX",
+  );
 
   if (!isResendAllowed)
     throw new customError(
@@ -19,9 +27,7 @@ export async function sendOtp({ email, userName, queueName = "email-queue", purp
       "Please try after 60 seconds to resend OTP again.",
     );
 
-  await redisClient.set(`otp:${purpose}:${email}`, otp, {
-    EX: 60 * 5,
-  });
+  await redisClient.set(`otp:${purpose}:${email}`, otp, "EX", 60 * 5);
 
   // Queue email
   await emailQueue.add(

@@ -4,10 +4,10 @@ import bcrypt from "bcrypt";
 import Users from "../Models/user.model.js";
 import Wallets from "../Models/wallet.model.js";
 import { sanitizeUser } from "../Utilities/sanitizeUser.js";
-import { redisClient } from "../../server.js";
 import { sendOtp, verifyOtp } from "../Services/otp.services.js";
 import customError from "../Utilities/customError.js";
 import sendResponse from "../Utilities/sendResponse.js";
+import { redis } from "../Config/redis.js";
 
 const otpTypes = {
   email_verification: "email-verification",
@@ -133,16 +133,15 @@ export const loginController = async (req, res, next) => {
     if (!isValidPassword) throw new customError(401, "Invalid credentials");
 
     let sid = new ObjectId().toString();
-    await redisClient.set(
+    await redis.set(
       sid,
       JSON.stringify({
         userId: user._id,
         walletId: user.walletId,
         email: user.email,
       }),
-      {
-        EX: 60 * 60 * 24,
-      },
+      "EX",
+      60 * 60 * 24,
     );
 
     res.cookie("sid", sid, {
@@ -159,7 +158,7 @@ export const loginController = async (req, res, next) => {
 
 export const logoutController = async (req, res, next) => {
   try {
-    await redisClient.del(req.signedCookies.sid);
+    await redis.del(req.signedCookies.sid);
     res.clearCookie("sid");
     return sendResponse(res, 200, "User logged out successfully");
   } catch (error) {
