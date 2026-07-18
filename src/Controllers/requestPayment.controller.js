@@ -1,110 +1,121 @@
 import mongoose from "mongoose";
 import PaymentRequests from "../Models/paymentRequests.model.js";
 import Users from "../Models/user.model.js";
-import { redisClient } from "../../server.js";
 import Wallets from "../Models/wallet.model.js";
 import Transactions from "../Models/transaction.model.js";
 import Ledgers from "../Models/ledger.model.js";
+import customError from "../Utilities/customError.js";
+import sendResponse from "../Utilities/sendResponse.js";
+import { redis } from "../Config/redis.js";
 
-export const requestPayment = async (req, res) => {
-  const { requestedTo, amount } = req.body;
-
-  if (!requestedTo || !amount || amount < 0) {
-    return res
-      .status(400)
-      .json({ message: "All fields are required and must be valid." });
-  }
-  if (requestedTo.equals(req.user.userId)) {
-    return res
-      .status(400)
-      .json({ error: "Receiver cannot request payment to themselves." });
-  }
-
+export const requestPayment = async (req, res, next) => {
   try {
+    const { requestedTo, amount } = req.body;
+
+    if (!requestedTo || !amount || amount < 0)
+      throw new customError(400, "All fields are required and must be valid.");
+
     const requesterId = req.user.userId;
     const requestedToUser = await Users.findOne({ email: requestedTo }).lean();
 
-    if (!requestedToUser) {
-      res.status(400).json({ message: "User not found." });
-    }
+    if (!requestedToUser) throw new customError(400, "User not found.");
 
-    const paymentRequest = await PaymentRequests.create({
+    if (requestedToUser._id.equals(requesterId))
+      throw new customError(
+        400,
+        "Receiver cannot request payment to themselves.",
+      );
+
+    await PaymentRequests.create({
       requestedBy: requesterId,
       requestedTo: requestedToUser._id,
       amount,
     });
-    return res.json({ message: "Requested payment successfully." });
+
+    return sendResponse(res, 201, "Payment requested successfully.");
   } catch (error) {
-    return res
-      .status(error.status || 500)
-      .json({ error: error.message, user: req.user });
+    next(error);
   }
 };
 
-export const incomingPaymentRequests = async (req, res) => {
+export const incomingPaymentRequests = async (req, res, next) => {
   try {
-  } catch (error) {}
-};
-
-export const outgoingPaymentRequests = async (req, res) => {
-  try {
-  } catch (error) {}
-};
-
-export const handlePaymentRequest = async (req, res) => {
-  const { paymentRequestId, action, idemKey } = req.body;
-
-  if (!paymentRequestId || !action || !idemKey) {
-    return res.status(400).json({ message: "Invalid request." });
+  } catch (error) {
+    next(error);
   }
+};
 
+export const outgoingPaymentRequests = async (req, res, next) => {
+  try {
+  } catch (error) {
+    next(error);
+  }
+};
+
+export const handlePaymentRequest = async (req, res, next) => {
   let session = await mongoose.startSession();
   let transaction;
-
-  const idempotencyKey = `idem:${req.user.userId}:${idemKey}:`;
-
+  let idempotencyKey;
   try {
-    const isSet = await redisClient.set(idempotencyKey, "PENDING", {
-      NX: true,
-      EX: 60 * 5,
-    });
+    const { paymentRequestId, action, idemKey } = req.body;
+
+    if (!paymentRequestId || !action || !idemKey)
+      throw new customError(400, "Invalid request");
+
+    idempotencyKey = `idem:${req.user.userId}:${idemKey}`;
+
+    const isSet = await redis.set(
+      idempotencyKey,
+      "PENDING",
+      "EX",
+      60 * 5,
+      "NX",
+    );
 
     if (!isSet) {
-      const existing = await redisClient.get(idempotencyKey);
-      return res.status(200).json({ status: existing });
+      const existing = await redis.get(idempotencyKey);
+      return sendResponse(
+        res,
+        200,
+        "Transaction already exists with this idempotency key",
+        { status: existing },
+      );
     }
 
     if (action === "reject") {
       await PaymentRequests.findOneAndUpdate(
-        { _id: paymentRequestId, requestedTo: req.user.userId },
+        {
+          _id: paymentRequestId,
+          requestedTo: req.user.userId,
+          status: "pending",
+        },
         { status: "rejected" },
       );
-      console.log("inside reject");
 
-      await redisClient.set(idempotencyKey, "rejected", {
-        EX: 60 * 5,
-      });
+      await redis.set(idempotencyKey, "rejected", "EX", 60 * 5);
 
-      return res.json({ message: "Payment request rejected successfully." });
+      return sendResponse(res, 200, "Payment request rejected successfully.");
     } else if (action === "accept") {
-      console.log("inside accept");
       await session.startTransaction();
 
       const request = await PaymentRequests.findOneAndUpdate(
-        { _id: paymentRequestId, requestedTo: req.user.userId },
+        {
+          _id: paymentRequestId,
+          requestedTo: req.user.userId,
+          status: "pending",
+        },
         { status: "accepted" },
         { session, new: true },
       );
 
+      if (!request) throw new customError(404, "Payment request not found.");
+
       const receiver = await Users.findById(request.requestedBy);
-      if (!receiver || !receiver.walletId) {
-        return res.status(404).json({ error: "Receiver or wallet not found." });
-      }
-      if (receiver._id.equals(req.user.userId)) {
-        return res
-          .status(400)
-          .json({ error: "Receiver cannot send money to themselves." });
-      }
+      if (!receiver || !receiver.walletId)
+        throw new customError(400, "Receiver or wallet not found.");
+
+      if (receiver._id.equals(req.user.userId))
+        throw new customError(400, "Receiver cannot send money to themselves.");
 
       const senderObjectId = request.requestedTo;
       const receiverObjectId = receiver._id;
@@ -115,9 +126,7 @@ export const handlePaymentRequest = async (req, res) => {
         { session },
       );
 
-      if (!sendResult) {
-        throw new Error("Insufficient balance");
-      }
+      if (!sendResult) throw new customError(400, "Insufficient balance");
 
       const receiveResult = await Wallets.findOneAndUpdate(
         { _id: receiver.walletId },
@@ -125,9 +134,8 @@ export const handlePaymentRequest = async (req, res) => {
         { session },
       );
 
-      if (!receiveResult) {
-        throw new Error(`Failed to send money to ${receiver.name}`);
-      }
+      if (!receiveResult)
+        throw new customError(400, `Failed to send money to ${receiver.name}`);
 
       [transaction] = await Transactions.create(
         [
@@ -142,9 +150,7 @@ export const handlePaymentRequest = async (req, res) => {
         { session },
       );
 
-      if (!transaction) throw new Error("Transaction not updated.");
-
-      const ledgerResult = await Ledgers.insertMany(
+      await Ledgers.insertMany(
         [
           {
             type: "debit",
@@ -164,19 +170,24 @@ export const handlePaymentRequest = async (req, res) => {
 
       await session.commitTransaction();
 
-      await redisClient.set(idempotencyKey, "SUCCESS", { EX: 60 * 5 });
+      await redis.set(idempotencyKey, "SUCCESS", "EX", 60 * 5);
     }
-    return res.json({ message: "Payment done successfully." });
+
+    return sendResponse(res, 200, "Payment done successfully.");
   } catch (error) {
-    console.log(error.message);
+    if (session.inTransaction()) {
+      await session.abortTransaction();
+    }
     if (transaction) {
       await Transactions.findByIdAndUpdate(transaction._id, {
         status: "failed",
       });
-      await redisClient.set(idempotencyKey, "FAILED", { EX: 60 * 5 });
     }
-    await session.abortTransaction();
-    return res.status(error.status || 500).json({ error: error.message });
+    if (idempotencyKey) {
+      await redis.set(idempotencyKey, "FAILED", "EX", 60 * 5);
+    }
+
+    next(error);
   } finally {
     await session.endSession();
   }
