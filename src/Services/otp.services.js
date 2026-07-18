@@ -1,7 +1,7 @@
-import { redisClient } from "../../server.js";
 import emailQueue from "../Queues/email.queue.js";
 import Crypto from "crypto";
 import customError from "../Utilities/customError.js";
+import { redis } from "../Config/redis.js";
 
 export async function sendOtp({
   email,
@@ -13,7 +13,7 @@ export async function sendOtp({
   const otp = Crypto.randomInt(1000, 10000);
 
   // Store in Redis
-  const isResendAllowed = await redisClient.set(
+  const isResendAllowed = await redis.set(
     `resend:${email}`,
     otp,
     "EX",
@@ -27,7 +27,7 @@ export async function sendOtp({
       "Please try after 60 seconds to resend OTP again.",
     );
 
-  await redisClient.set(`otp:${purpose}:${email}`, otp, "EX", 60 * 5);
+  await redis.set(`otp:${purpose}:${email}`, otp, "EX", 60 * 5);
 
   // Queue email
   await emailQueue.add(

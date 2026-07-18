@@ -1,5 +1,6 @@
-import customError from "../Utilities/customError";
-import sendResponse from "../Utilities/sendResponse";
+import { redis } from "../Config/redis.js";
+import customError from "../Utilities/customError.js";
+import sendResponse from "../Utilities/sendResponse.js";
 
 export const getAllSessionsController = async (req, res, next) => {
   try {

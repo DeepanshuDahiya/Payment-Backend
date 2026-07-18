@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import Ledgers from "../Models/ledger.model.js";
 import Wallets from "../Models/wallet.model.js";
 import customError from "../Utilities/customError.js";
@@ -22,7 +23,7 @@ export const verifyWallet = async (req, res, next) => {
 
     const result = await Ledgers.aggregate([
       {
-        $match: { userId: req.user.userId },
+        $match: { userId: new mongoose.Types.ObjectId(req.user.userId) },
       },
       {
         $group: { _id: null, total: { $sum: "$amount" } },

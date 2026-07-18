@@ -31,7 +31,7 @@ const userSchema = new Schema(
     },
     expiresAt: {
       type: Date,
-      default: () => new Date(Date.now() + 10000),
+      default: () => new Date(Date.now() + 1000 * 60 * 60 * 24),
     },
   },
   {

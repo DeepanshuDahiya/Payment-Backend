@@ -1,7 +1,6 @@
 import { Worker } from "bullmq";
 import bullmqConnection from "../Config/bullmqConnection.js";
 import { sendMail } from "../Services/email.services.js";
-import { redisClient } from "../../server.js";
 import { otpTemplate } from "../Templates/otp.template.js";
 
 const emailWorker = new Worker(

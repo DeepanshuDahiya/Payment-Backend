@@ -23,7 +23,7 @@ export const registerController = async (req, res, next) => {
 
     const hashedPassword = await bcrypt.hash(password, 12);
 
-    await Users.create({
+    const user = await Users.create({
       name,
       email,
       password: hashedPassword,
@@ -74,6 +74,7 @@ export const verifyUser = async (req, res, next) => {
     if (!email || !otp) throw new customError(400, "All fields are required");
 
     const user = await Users.findOne({ email });
+
     if (!user) throw new customError(400, "User not registered");
 
     if (user.isVerified === true)
@@ -139,6 +140,7 @@ export const loginController = async (req, res, next) => {
         userId: user._id,
         walletId: user.walletId,
         email: user.email,
+        name: user.name,
       }),
       "EX",
       60 * 60 * 24,
@@ -181,7 +183,7 @@ export const resetPasswordOtp = async (req, res, next) => {
   try {
     const { email } = req.body;
 
-    const user = await Users.findOne(email);
+    const user = await Users.findOne({ email });
     if (!user) throw new customError(400, "Enter a valid and registered Email");
 
     await sendOtp({

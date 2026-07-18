@@ -1,16 +1,17 @@
-import { redisClient } from "../../server.js";
+import { redis } from "../Config/redis.js";
+import sendResponse from "../Utilities/sendResponse.js";
 
 export const paymentRateLimiter = async (req, res, next) => {
   const id = req.user.userId;
   const key = `rate:user:${id}`;
 
-  const counter = await redisClient.incr(key);
+  const counter = await redis.incr(key);
 
   if (counter === 1) {
-    redisClient.expire(key, 60);
+    await redis.expire(key, 60);
   }
   if (counter > 3) {
-    return res.status(429).json({ error: "Too many requests" });
+    return sendResponse(res, 429, "Too many requests");
   }
   next();
 };

@@ -1,3 +1,4 @@
+import dotenv from "dotenv/config";
 import express from "express";
 import cookieParser from "cookie-parser";
 import cors from "cors";
@@ -9,9 +10,8 @@ import sessionRoutes from "./Routes/session.routes.js";
 import requestPaymentRoutes from "./Routes/requestPayment.routes.js";
 import { requireAuth } from "./Middlewares/auth.middleware.js";
 import { globalRateLimiter } from "./Middlewares/global.rate.limiter.js";
-import dotenv from "dotenv";
+import "./Workers/email.worker.js";
 import { errorHandler } from "./Middlewares/error.handler.js";
-dotenv.config();
 
 const app = express();
 
