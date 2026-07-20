@@ -4,7 +4,6 @@ import { redis } from "../Config/redis.js";
 
 export const globalRateLimiter = async (req, res, next) => {
   let ip = req.ip;
-  console.log(ip, req.headers);
 
   // ip = ip.replace(/:/g, "_");
 
