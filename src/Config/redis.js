@@ -3,6 +3,7 @@ import Redis from "ioredis";
 export const redis = new Redis({
   host: process.env.IO_REDIS_HOST,
   port: process.env.IO_REDIS_PORT,
+  password: process.env.IO_REDIS_PASSWORD,
   maxRetriesPerRequest: null,
   lazyConnect: true,
   retryStrategy(times) {

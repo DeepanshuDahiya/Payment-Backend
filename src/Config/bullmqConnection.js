@@ -3,6 +3,7 @@ import IORedis from "ioredis";
 const bullmqConnection = new IORedis({
   host: process.env.IO_REDIS_HOST,
   port: process.env.IO_REDIS_PORT,
+  password: process.env.IO_REDIS_PASSWORD,
   maxRetriesPerRequest: null,
   retryStrategy(times) {
     if (times > 3) {
