@@ -1,7 +1,7 @@
 import express from "express";
 import {
   getAllSessionsController,
-  // terminateAllSessionController,
+  terminateAllSessionController,
   terminateSessionController,
 } from "../Controllers/session.controller.js";
 
@@ -11,6 +11,6 @@ router.get("/allSessions", getAllSessionsController);
 
 router.delete("/{:sessionId}", terminateSessionController);
 
-// router.delete("/allSession", requireAuth, terminateAllSessionController);
+router.delete("/allSession", terminateAllSessionController);
 
 export default router;

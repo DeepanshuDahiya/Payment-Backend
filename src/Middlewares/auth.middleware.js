@@ -7,7 +7,7 @@ export const requireAuth = async (req, res, next) => {
     const sid = req.signedCookies.sid;
     if (!sid) throw new customError(401, "Unauthorized");
 
-    let session = await redis.get(sid);
+    let session = await redis.get(`session:${sid}`);
 
     if (!session) {
       res.clearCookie("sid");
@@ -15,6 +15,14 @@ export const requireAuth = async (req, res, next) => {
     }
 
     const user = JSON.parse(session);
+
+    const now = Date.now();
+
+    if (user.lastSeen < now + 1000 * 60 * 5) {
+      user.lastSeen = now;
+
+      await redis.set(`session:${sid}`, JSON.stringify(user), "KEEPTTL");
+    }
 
     req.user = user;
     next();
